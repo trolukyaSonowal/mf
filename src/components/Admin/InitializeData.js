@@ -5,7 +5,8 @@ import {
   initializeNotifications, 
   initializeOrders,
   initializeUsers,
-  initializeCarts
+  initializeCarts,
+  initializeVendors
 } from '../../firebase/firestore';
 
 const InitializeData = () => {
@@ -23,6 +24,7 @@ const InitializeData = () => {
       await initializeCarts();
       await initializeOrders();
       await initializeNotifications();
+      await initializeVendors();
       setMessage('Data initialized successfully!');
     } catch (error) {
       setMessage(`Error initializing data: ${error.message}`);
@@ -43,6 +45,7 @@ const InitializeData = () => {
           <li>Carts</li>
           <li>Orders</li>
           <li>Notifications</li>
+          <li>Vendors</li>
         </ul>
       </p>
       <button

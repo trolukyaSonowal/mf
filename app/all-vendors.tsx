@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -14,9 +14,14 @@ import { useTheme, getThemeColors } from './ThemeContext';
 import { VendorContext } from './VendorContext';
 
 export default function AllVendors() {
-  const { vendors } = useContext(VendorContext);
+  const { vendors, refreshVendors } = useContext(VendorContext);
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
+  
+  // Refresh vendors when component mounts
+  useEffect(() => {
+    refreshVendors();
+  }, []);
   
   // Filter only verified vendors
   const verifiedVendors = vendors.filter(vendor => vendor.isVerified);
@@ -40,6 +45,12 @@ export default function AllVendors() {
             <Text style={[styles.emptyText, { color: colors.secondaryText }]}>
               No vendors available at the moment.
             </Text>
+            <TouchableOpacity 
+              onPress={refreshVendors}
+              style={[styles.refreshButton, { backgroundColor: colors.primary }]}
+            >
+              <Text style={styles.refreshButtonText}>Refresh</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.vendorsGrid}>
@@ -121,6 +132,16 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     textAlign: 'center',
+    marginBottom: 16,
+  },
+  refreshButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  refreshButtonText: {
+    color: 'white',
+    fontWeight: '500',
   },
   vendorsGrid: {
     flexDirection: 'row',
