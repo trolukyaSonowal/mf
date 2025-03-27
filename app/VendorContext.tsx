@@ -1,5 +1,7 @@
-import React, { createContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from './firebaseConfig';
 
 // Define the Vendor interface
 export interface Vendor {
@@ -31,6 +33,7 @@ interface VendorContextType {
   verifyVendor: (id: string) => void;
   getVendorById: (id: string) => Vendor | undefined;
   setCurrentVendor: (vendorId: string | null) => void;
+  refreshVendors: () => Promise<void>;
 }
 
 interface VendorProviderProps {
@@ -46,71 +49,70 @@ export const VendorContext = createContext<VendorContextType>({
   verifyVendor: () => {},
   getVendorById: () => undefined,
   setCurrentVendor: () => {},
+  refreshVendors: async () => {}
 });
 
 export const VendorProvider = ({ children }: VendorProviderProps) => {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [currentVendor, setCurrentVendorState] = useState<Vendor | null>(null);
 
-  // Load vendors from AsyncStorage when the component mounts
-  useEffect(() => {
-    const loadVendors = async () => {
+  // Function to load vendors from Firestore
+  const loadVendorsFromFirestore = async () => {
+    try {
+      console.log('Loading vendors from Firestore...');
+      const vendorsSnapshot = await getDocs(collection(db, 'vendors'));
+      
+      if (!vendorsSnapshot.empty) {
+        const vendorsList = vendorsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name || '',
+          email: doc.data().email || '',
+          phone: doc.data().phone || '',
+          logo: doc.data().logoUrl || '',
+          address: doc.data().address || '',
+          description: doc.data().description || '',
+          rating: doc.data().rating || 0,
+          isVerified: true, // Set all vendors as verified by default
+          joinDate: doc.data().createdAt ? new Date(doc.data().createdAt.toDate()).toISOString() : new Date().toISOString(),
+          categories: doc.data().categories || []
+        }));
+        
+        console.log(`Found ${vendorsList.length} vendors in Firestore`);
+        setVendors(vendorsList);
+        
+        // Save to AsyncStorage as backup
+        await AsyncStorage.setItem('vendors', JSON.stringify(vendorsList));
+      } else {
+        console.log('No vendors found in Firestore, checking AsyncStorage');
+        const storedVendors = await AsyncStorage.getItem('vendors');
+        
+        if (storedVendors) {
+          console.log('Loading vendors from AsyncStorage');
+          setVendors(JSON.parse(storedVendors));
+        } else {
+          console.log('No vendors found in AsyncStorage either');
+          setVendors([]);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading vendors from Firestore:', error);
+      
+      // Fallback to AsyncStorage
       try {
         const storedVendors = await AsyncStorage.getItem('vendors');
         if (storedVendors) {
+          console.log('Falling back to AsyncStorage for vendors');
           setVendors(JSON.parse(storedVendors));
-        } else {
-          // Initialize with some sample vendors if none exist
-          const initialVendors = [
-            {
-              id: 'vendor1',
-              name: 'Fresh Farms',
-              email: 'vendor1@vendor.com',
-              phone: '9876543210',
-              logo: 'https://images.unsplash.com/photo-1498579809087-ef1e558fd1da?auto=format&fit=crop&q=80&w=300',
-              address: '123 Farm Road, Green Valley',
-              description: 'We provide fresh organic produce directly from our farms.',
-              rating: 4.8,
-              isVerified: true,
-              joinDate: new Date().toISOString(),
-              categories: ['Fruits', 'Vegetables', 'Organic'],
-            },
-            {
-              id: 'vendor2',
-              name: 'Dairy Delight',
-              email: 'vendor2@vendor.com',
-              phone: '9876543211',
-              logo: 'https://images.unsplash.com/photo-1634301295749-9c69478a9204?auto=format&fit=crop&q=80&w=300',
-              address: '456 Milk Way, Cream County',
-              description: 'Premium dairy products from grass-fed cows.',
-              rating: 4.6,
-              isVerified: true,
-              joinDate: new Date().toISOString(),
-              categories: ['Dairy', 'Organic'],
-            },
-            {
-              id: 'vendor3',
-              name: 'Bake House',
-              email: 'vendor3@vendor.com',
-              phone: '9876543212',
-              logo: 'https://images.unsplash.com/photo-1515823662972-da6a2ab7040e?auto=format&fit=crop&q=80&w=300',
-              address: '789 Wheat Street, Flour City',
-              description: 'Freshly baked breads and pastries every day.',
-              rating: 4.5,
-              isVerified: true,
-              joinDate: new Date().toISOString(),
-              categories: ['Bakery'],
-            }
-          ];
-          setVendors(initialVendors);
-          await AsyncStorage.setItem('vendors', JSON.stringify(initialVendors));
         }
-      } catch (error) {
-        console.error('Error loading vendors from AsyncStorage:', error);
+      } catch (asyncError) {
+        console.error('Error loading vendors from AsyncStorage (fallback):', asyncError);
       }
-    };
-
-    loadVendors();
+    }
+  };
+  
+  // Load vendors from Firestore when the component mounts
+  useEffect(() => {
+    loadVendorsFromFirestore();
   }, []);
 
   // Load current vendor if logged in as vendor
@@ -223,6 +225,11 @@ export const VendorProvider = ({ children }: VendorProviderProps) => {
       setCurrentVendorState(null);
     }
   };
+  
+  // Function to manually refresh vendors from Firestore
+  const refreshVendors = async () => {
+    await loadVendorsFromFirestore();
+  };
 
   return (
     <VendorContext.Provider
@@ -235,6 +242,7 @@ export const VendorProvider = ({ children }: VendorProviderProps) => {
         verifyVendor,
         getVendorById,
         setCurrentVendor,
+        refreshVendors
       }}
     >
       {children}

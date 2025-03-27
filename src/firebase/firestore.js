@@ -506,4 +506,76 @@ export const initializeCarts = async () => {
     console.error('Error initializing carts:', error);
     throw error;
   }
+};
+
+// Initialize sample vendors
+export const initializeVendors = async () => {
+  const vendors = [
+    {
+      name: "Fresh Farms",
+      email: "freshfarms@example.com",
+      phone: "+1234567890",
+      address: "123 Farm Road, Green Valley",
+      description: "We provide fresh organic produce directly from our farms.",
+      logoUrl: "https://images.unsplash.com/photo-1498579809087-ef1e558fd1da?auto=format&fit=crop&q=80&w=300",
+      rating: 4.8,
+      reviewCount: 42,
+      isActive: true,
+      categories: ['Fruits', 'Vegetables', 'Organic'],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    },
+    {
+      name: "Dairy Delight",
+      email: "dairydelight@example.com",
+      phone: "+1234567891",
+      address: "456 Milk Way, Cream County",
+      description: "Premium dairy products from grass-fed cows.",
+      logoUrl: "https://images.unsplash.com/photo-1634301295749-9c69478a9204?auto=format&fit=crop&q=80&w=300",
+      rating: 4.6,
+      reviewCount: 38,
+      isActive: true,
+      categories: ['Dairy', 'Organic'],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    },
+    {
+      name: "Bake House",
+      email: "bakehouse@example.com",
+      phone: "+1234567892",
+      address: "789 Wheat Street, Flour City",
+      description: "Freshly baked breads and pastries every day.",
+      logoUrl: "https://images.unsplash.com/photo-1515823662972-da6a2ab7040e?auto=format&fit=crop&q=80&w=300",
+      rating: 4.5,
+      reviewCount: 36,
+      isActive: true,
+      categories: ['Bakery', 'Bread'],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    },
+    {
+      name: "Organic Corner",
+      email: "organiccorner@example.com",
+      phone: "+1234567893",
+      address: "101 Green Lane, Eco Town",
+      description: "Your one-stop shop for certified organic products.",
+      logoUrl: "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=300",
+      rating: 4.7,
+      reviewCount: 40,
+      isActive: true,
+      categories: ['Organic', 'Health Foods', 'Supplements'],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }
+  ];
+
+  try {
+    for (const vendor of vendors) {
+      await addDoc(collection(db, 'vendors'), vendor);
+    }
+    console.log('Vendors initialized successfully');
+  } catch (error) {
+    console.error('Error initializing vendors:', error);
+    throw error;
+  }
 }; 
