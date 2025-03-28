@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isVendor() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/vendors/$(request.auth.uid));
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated();
+    }
+    
+    // Vendors collection
+    match /vendors/{vendorId} {
+      allow read: if true; // Anyone can view vendor info
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.uid == vendorId);
+    }
+    
+    // Products collection - UPDATED
+    match /products/{productId} {
+      allow read: if true; // Anyone can view products
+      
+      // Only admin or the vendor who owns the product can create, update, or delete
+      allow create: if isAdmin() || (isVendor() && request.resource.data.vendorId == request.auth.uid);
+        
+      allow update, delete: if isAdmin() || (isAuthenticated() && 
+        resource.data.vendorId == request.auth.uid);
+    }
+    
+    // Orders collection
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.vendorId == request.auth.uid ||
+         isAdmin());
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.vendorId == request.auth.uid ||
+         isAdmin());
+    }
+    
+    // Carts collection
+    match /carts/{cartId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.forAdmin == true && isAdmin());
+      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Categories collection
+    match /categories/{categoryId} {
+      allow read: if true; // Anyone can view categories
+      allow write: if isAdmin();
+    }
+  }
+} 

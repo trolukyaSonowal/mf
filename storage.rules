@@ -1,0 +1,24 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read access to everyone for all files
+    match /{allPaths=**} {
+      allow read: if true;
+    }
+    
+    // Allow authenticated users to upload to any product path
+    match /products/{allPaths=**} {
+      allow write: if request.auth != null;
+    }
+    
+    // Allow users to upload their profile images
+    match /users/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Allow vendors to upload their store images
+    match /vendors/{vendorId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == vendorId;
+    }
+  }
+} 

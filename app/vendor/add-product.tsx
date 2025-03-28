@@ -9,7 +9,8 @@ import {
   Image, 
   Switch, 
   Dimensions,
-  Alert 
+  Alert,
+  ActivityIndicator 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -19,6 +20,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ProductsContext } from '../ProductsContext';
 import { VendorContext } from '../VendorContext';
 import { useNotifications } from '../NotificationContext';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { Picker } from '@react-native-picker/picker';
+import { auth, storage } from '../firebaseConfig';
 
 // Array of product categories
 const categories = [
@@ -45,22 +49,30 @@ export default function AddProduct() {
   const [price, setPrice] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState(categories[0]);
-  const [image, setImage] = useState('https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&q=80&w=400');
+  const [image, setImage] = useState<string | null>(null);
   const [stock, setStock] = useState('50');
   const [organic, setOrganic] = useState(false);
   const [sku, setSku] = useState('');
+  const [discountPrice, setDiscountPrice] = useState('');
+  const [inStock, setInStock] = useState(true);
   
   // Form validation
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
   
   // Load vendor data from AsyncStorage as a fallback
   useEffect(() => {
     const loadVendorData = async () => {
       try {
+        // Print auth user information for debugging
+        console.log('Current auth user:', auth.currentUser?.uid);
+        
         // If we already have the vendor from context, use that
         if (currentVendor) {
-          console.log('AddProduct: Using vendor from context:', currentVendor.name);
+          console.log('AddProduct: Using vendor from context:', currentVendor.name, 'with ID:', currentVendor.id);
           setLocalVendor(currentVendor);
           return;
         }
@@ -73,13 +85,16 @@ export default function AddProduct() {
         
         if (vendorData) {
           const parsedVendor = JSON.parse(vendorData);
-          console.log('AddProduct: Loaded vendor from AsyncStorage:', parsedVendor.name);
+          console.log('AddProduct: Loaded vendor from AsyncStorage:', parsedVendor.name, 'with ID:', parsedVendor.id);
           setLocalVendor(parsedVendor);
         } else {
           console.error('AddProduct: No vendor data found in AsyncStorage');
+          Alert.alert('Error', 'Vendor data not found. Please log in again.');
+          router.replace('/login');
         }
       } catch (error) {
         console.error('Error loading vendor data:', error);
+        Alert.alert('Error', 'Failed to load vendor data. Please try again.');
       }
     };
     
@@ -99,93 +114,133 @@ export default function AddProduct() {
   
   // Image picker function
   const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      
+      if (!result.canceled) {
+        setImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    }
+  };
+  
+  const uploadImage = async (uri: string) => {
+    setUploading(true);
+    try {
+      console.log('Starting image upload...');
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      // Use the shared storage instance
+      const filename = uri.substring(uri.lastIndexOf('/') + 1);
+      const timestamp = Date.now();
+      const storagePath = `products/${timestamp}_${filename}`;
+      
+      console.log('Uploading to storage location:', storagePath);
+      const storageRef = ref(storage, storagePath);
+      
+      console.log('Storage reference created:', storageRef);
+      await uploadBytes(storageRef, blob);
+      console.log('Image bytes uploaded successfully');
+      
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      console.log('Image uploaded successfully, URL:', downloadURL);
+      return downloadURL;
+    } catch (error: any) {
+      console.error('Error uploading image:', error);
+      console.error('Detailed error:', JSON.stringify(error));
+      throw new Error(`Image upload failed: ${error.message}`);
+    } finally {
+      setUploading(false);
     }
   };
   
   // Submit handler
-  const handleSubmit = () => {
-    // Reset errors
-    setErrors({});
-    setIsSubmitting(true);
+  const handleSubmit = async () => {
+    // Reset error state
+    setError('');
     
-    // Validate form
-    let hasErrors = false;
-    const newErrors: {[key: string]: string} = {};
-    
-    if (!name.trim()) {
-      newErrors.name = 'Product name is required';
-      hasErrors = true;
-    }
-    
-    if (!price.trim()) {
-      newErrors.price = 'Price is required';
-      hasErrors = true;
-    } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-      newErrors.price = 'Price must be a positive number';
-      hasErrors = true;
-    }
-    
-    if (!stock.trim()) {
-      newErrors.stock = 'Stock quantity is required';
-      hasErrors = true;
-    } else if (isNaN(parseInt(stock)) || parseInt(stock) < 0) {
-      newErrors.stock = 'Stock must be a non-negative number';
-      hasErrors = true;
-    }
-    
-    if (!description.trim()) {
-      newErrors.description = 'Description is required';
-      hasErrors = true;
-    }
-    
-    // If has errors, show them and stop submission
-    if (hasErrors) {
-      setErrors(newErrors);
-      setIsSubmitting(false);
+    // Validate required inputs (image is now optional)
+    if (!name || !description || !price || !category || !stock) {
+      setError('Please fill all required fields');
+      Alert.alert('Error', 'Please fill all required fields');
       return;
     }
     
-    // Create new product
+    if (!localVendor?.id) {
+      setError('Vendor data not found');
+      Alert.alert('Error', 'Vendor data not found. Please log in again.');
+      return;
+    }
+    
+    const vendorId = localVendor.id;
+    console.log('Preparing to add product with vendor ID:', vendorId);
+    console.log('Current authenticated user:', auth.currentUser?.uid);
+    
+    setLoading(true);
+    
     try {
-      if (!localVendor) {
-        Alert.alert('Error', 'Vendor information not found. Please try again.');
-        setIsSubmitting(false);
-        return;
+      let imageUrl = '';
+      
+      if (image) {
+        try {
+          imageUrl = await uploadImage(image);
+        } catch (imageError: any) {
+          console.error('Image upload failed:', imageError);
+          setError(`Image upload failed: ${imageError.message}`);
+          Alert.alert('Error', `Failed to upload image: ${imageError.message}`);
+          setLoading(false);
+          return;
+        }
       }
       
-      // Add product with vendor ID
-      const newProduct = addProduct({
+      // Create product object
+      const newProduct: any = {
         name,
-        price: parseFloat(price),
-        image,
-        category,
-        organic,
-        rating: 0,
         description,
-        vendorId: localVendor.id,
+        price: parseFloat(price),
+        category,
+        imageUrl, // This could be empty string if no image was uploaded
         stock: parseInt(stock),
-        sku: sku.trim() || undefined, // Optional, will be auto-generated if empty
-      });
+        inStock,
+        vendorId, // Use the vendorId from above for consistency
+        rating: 0
+      };
       
-      Alert.alert(
-        'Success',
-        `"${name}" has been added successfully`,
-        [{ text: 'OK', onPress: () => router.push('/vendor/products') }]
-      );
-    } catch (error) {
-      console.error('Error adding product:', error);
-      Alert.alert('Error', 'Failed to add product. Please try again.');
+      // Only add discountPrice if it has a value
+      if (discountPrice && discountPrice.trim() !== '') {
+        newProduct.discountPrice = parseFloat(discountPrice);
+      }
+      
+      console.log('Adding product with data:', JSON.stringify(newProduct));
+      console.log('Vendor ID in product:', newProduct.vendorId);
+      
+      try {
+        const productId = await addProduct(newProduct);
+        console.log('Product added successfully with ID:', productId);
+        Alert.alert('Success', 'Product added successfully!', [
+          { text: 'OK', onPress: () => router.replace('/vendor/products') }
+        ]);
+      } catch (addError: any) {
+        console.error('Error adding product to Firestore:', addError);
+        console.error('Error details:', JSON.stringify(addError));
+        setError(`Failed to add product: ${addError.message}`);
+        Alert.alert('Error', `Failed to add product: ${addError.message}`);
+      }
+    } catch (error: any) {
+      console.error('Unexpected error in product submission:', error);
+      setError(`Unexpected error: ${error.message}`);
+      Alert.alert('Error', `Unexpected error: ${error.message}`);
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
   
@@ -303,6 +358,12 @@ export default function AddProduct() {
         </View>
         
         <ScrollView style={styles.content}>
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+          
           <View style={styles.formContainer}>
             <View style={styles.formSection}>
               <Text style={styles.sectionTitle}>Product Information</Text>
@@ -349,31 +410,17 @@ export default function AddProduct() {
               {/* Category Selection */}
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Category*</Text>
-                <ScrollView 
-                  horizontal 
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.categoryContainer}
-                >
-                  {categories.map((cat) => (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[
-                        styles.categoryButton,
-                        category === cat && styles.categoryButtonActive
-                      ]}
-                      onPress={() => setCategory(cat)}
-                    >
-                      <Text
-                        style={[
-                          styles.categoryButtonText,
-                          category === cat && styles.categoryButtonTextActive
-                        ]}
-                      >
-                        {cat}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={category}
+                    onValueChange={(itemValue) => setCategory(itemValue)}
+                    style={styles.picker}
+                  >
+                    {categories.map((cat) => (
+                      <Picker.Item key={cat} label={cat} value={cat} />
+                    ))}
+                  </Picker>
+                </View>
               </View>
               
               {/* Description */}
@@ -419,40 +466,42 @@ export default function AddProduct() {
             </View>
             
             <View style={styles.formSection}>
-              <Text style={styles.sectionTitle}>Product Image</Text>
+              <Text style={styles.sectionTitle}>Product Image (Optional)</Text>
               
-              <TouchableOpacity 
-                style={styles.imageUploadContainer}
-                onPress={pickImage}
-              >
-                {image ? (
+              {image ? (
+                <View style={styles.imagePreviewContainer}>
                   <Image source={{ uri: image }} style={styles.productImage} />
-                ) : (
-                  <View style={styles.imagePlaceholder}>
-                    <Upload size={32} color="#6B7280" />
-                    <Text style={styles.imagePlaceholderText}>Upload Image</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.changeImageButton}
-                onPress={pickImage}
-              >
-                <Text style={styles.changeImageButtonText}>
-                  {image ? 'Change Image' : 'Select Image'}
-                </Text>
-              </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.removeImageButton}
+                    onPress={() => setImage(null)}
+                  >
+                    <X size={20} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity 
+                  style={styles.uploadButton}
+                  onPress={pickImage}
+                >
+                  <Upload size={24} color="#4F46E5" />
+                  <Text style={styles.uploadButtonText}>Choose Image (Optional)</Text>
+                </TouchableOpacity>
+              )}
             </View>
             
             <TouchableOpacity 
-              style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+              style={[
+                styles.submitButton,
+                (loading || uploading) && styles.disabledButton
+              ]}
               onPress={handleSubmit}
-              disabled={isSubmitting}
+              disabled={loading || uploading}
             >
-              <Text style={styles.submitButtonText}>
-                {isSubmitting ? 'Adding Product...' : 'Add Product'}
-              </Text>
+              {loading || uploading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.submitButtonText}>Add Product</Text>
+              )}
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -629,27 +678,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: 16,
   },
-  categoryContainer: {
-    flexDirection: 'row',
-    paddingVertical: 8,
+  pickerContainer: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
   },
-  categoryButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
-    marginRight: 8,
-  },
-  categoryButtonActive: {
-    backgroundColor: '#059669',
-  },
-  categoryButtonText: {
-    fontSize: 14,
-    color: '#4B5563',
-  },
-  categoryButtonTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '500',
+  picker: {
+    height: 50,
   },
   switchContainer: {
     flexDirection: 'row',
@@ -662,53 +698,54 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#4B5563',
   },
-  imageUploadContainer: {
+  imagePreviewContainer: {
+    position: 'relative',
     width: '100%',
     height: 200,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     borderRadius: 8,
     overflow: 'hidden',
-    marginBottom: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   productImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
-  imagePlaceholder: {
+  removeImageButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  imagePlaceholderText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  changeImageButton: {
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+  uploadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
     borderRadius: 8,
-    alignSelf: 'center',
+    padding: 16,
+    borderStyle: 'dashed',
   },
-  changeImageButtonText: {
-    fontSize: 14,
-    color: '#4B5563',
-    fontWeight: '500',
+  uploadButtonText: {
+    fontSize: 16,
+    color: '#4F46E5',
+    marginLeft: 8,
   },
   submitButton: {
-    backgroundColor: '#059669',
-    paddingVertical: 12,
+    backgroundColor: '#4F46E5',
     borderRadius: 8,
+    padding: 16,
     alignItems: 'center',
     marginTop: 16,
   },
-  submitButtonDisabled: {
-    backgroundColor: '#10B981',
-    opacity: 0.7,
+  disabledButton: {
+    backgroundColor: '#A5B4FC',
   },
   submitButtonText: {
     fontSize: 16,
@@ -731,5 +768,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  errorContainer: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
   },
 }); 

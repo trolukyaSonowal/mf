@@ -1,3 +1,4 @@
+import React from 'react';
 import { Stack, Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { CartProvider } from './CartContext';

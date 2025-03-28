@@ -4,22 +4,24 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Filter, Search, Plus } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CartContext } from '../CartContext'; // Import the CartContext
-import { ProductsContext } from '../ProductsContext'; // Import the ProductsContext
+import { ProductsContext, Product as FirestoreProduct } from '../ProductsContext'; // Import the ProductsContext and its Product type
 import { useTheme, getThemeColors } from '../ThemeContext';
 
 const categories = [
   { name: 'All', icon: '🛒' },
-  { name: 'Fruits & Vegetables', icon: '🥬' },
-  { name: 'Dairy & Eggs', icon: '🥛' },
+  { name: 'Fruits', icon: '🥬' },
+  { name: 'vegetables', icon: '🥬' },
+  { name: 'Dairy', icon: '🥛' },
   { name: 'Bakery', icon: '🥖' },
-  { name: 'Meat & Fish', icon: '🥩' },
+  { name: 'Fish', icon: '🥩' },
+  { name: 'Meat', icon: '🥩' },
   { name: 'Pantry', icon: '🥫' },
   { name: 'Beverages', icon: '🧃' },
 ];
 
-// Define a product type
-interface Product {
-  id: number;
+// Define a product type for local use
+interface LocalProduct {
+  id: number | string;
   name: string;
   price: number;
   image: string;
@@ -30,10 +32,16 @@ interface Product {
   vendorId?: string;
   stock?: number;
   sku?: string;
+  imageUrl?: string;
+  inStock?: boolean;
+  createdAt?: string;
 }
 
+// Type that can handle both local and Firestore products
+type ProductUnion = LocalProduct | FirestoreProduct;
+
 // Default products that will be shown if no products are added yet
-const defaultProducts: Product[] = [
+const defaultProducts: LocalProduct[] = [
  // Fruits from vendor1 (Fresh Farms)
  {
   id: 1,
@@ -207,6 +215,78 @@ const defaultProducts: Product[] = [
 const priceRanges = ['All', 'Under ₹5', '₹5 - ₹10', 'Over ₹10'];
 const sortOptions = ['Price: Low to High', 'Price: High to Low', 'Rating: High to Low'];
 
+// Define CartProduct interface to match what CartContext expects
+interface CartProduct {
+  id: number;
+  name: string;
+  price: number;
+  image: string;
+  category: string;
+  organic: boolean;
+  rating: number;
+  description?: string;
+}
+
+// Helper function to get image URL from either product type
+const getProductImage = (product: ProductUnion): string => {
+  if ('image' in product) {
+    return product.image;
+  } else if ('imageUrl' in product) {
+    return product.imageUrl;
+  }
+  return 'https://via.placeholder.com/400'; // Fallback image
+};
+
+// Helper function to get product ID, handling both string and number types
+const getProductId = (product: ProductUnion): string | number => {
+  return product.id;
+};
+
+// Helper function to determine if a product is organic
+const isOrganic = (product: ProductUnion): boolean => {
+  return 'organic' in product ? product.organic : false;
+};
+
+// Helper function to convert any product to the local format
+const convertToLocalProduct = (product: ProductUnion): LocalProduct => {
+  if ('image' in product) {
+    // This is already a LocalProduct
+    return product;
+  } else {
+    // This is a FirestoreProduct, convert it
+    return {
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      image: product.imageUrl,
+      category: product.category,
+      organic: false, // Default value since Firestore product doesn't have this
+      rating: product.rating,
+      description: product.description,
+      vendorId: product.vendorId,
+      stock: product.stock,
+      imageUrl: product.imageUrl,
+      inStock: product.inStock,
+      createdAt: product.createdAt
+    };
+  }
+};
+
+// Helper function to convert ProductUnion to CartProduct format
+const convertToCartProduct = (product: ProductUnion): CartProduct => {
+  // Create a new product object with the expected CartProduct shape
+  return {
+    id: typeof product.id === 'string' ? parseInt(product.id, 10) || 0 : product.id, // Convert string IDs to numbers
+    name: product.name,
+    price: product.price,
+    image: getProductImage(product),
+    category: product.category,
+    organic: isOrganic(product),
+    rating: product.rating,
+    description: 'description' in product ? product.description : undefined
+  };
+};
+
 export default function ProductsScreen() {
   const { addToCart } = useContext(CartContext);
   const { products: contextProducts } = useContext(ProductsContext);
@@ -222,8 +302,9 @@ export default function ProductsScreen() {
   const [showFilters, setShowFilters] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const handleAddToCart = (product: Product) => {
-    addToCart(product);
+  const handleAddToCart = (product: ProductUnion) => {
+    // Convert to CartProduct format before adding to cart
+    addToCart(convertToCartProduct(product));
   };
 
   const handleAddNewItem = () => {
@@ -232,12 +313,14 @@ export default function ProductsScreen() {
     }
   };
 
-  const handleProductPress = (productId: number) => {
-    router.push(`/product-details?id=${productId}`);
+  const handleProductPress = (productId: string | number) => {
+    // Convert string IDs to numbers if needed
+    const numericId = typeof productId === 'string' ? parseInt(productId, 10) || 0 : productId;
+    router.push(`/product-details?id=${numericId}`);
   };
 
   const filteredProducts = allProducts
-    .filter((product: Product) => {
+    .filter((product: ProductUnion) => {
       if (searchQuery) {
         const searchLower = searchQuery.toLowerCase();
         if (!product.name.toLowerCase().includes(searchLower) &&
@@ -247,7 +330,7 @@ export default function ProductsScreen() {
       }
       
       if (selectedCategory !== 'All' && product.category !== selectedCategory) return false;
-      if (showOrganic && !product.organic) return false;
+      if (showOrganic && !isOrganic(product)) return false;
       
       if (selectedPriceRange !== 'All') {
         const price = product.price;
@@ -258,7 +341,7 @@ export default function ProductsScreen() {
       
       return true;
     })
-    .sort((a: Product, b: Product) => {
+    .sort((a: ProductUnion, b: ProductUnion) => {
       switch (selectedSort) {
         case 'Price: Low to High': return a.price - b.price;
         case 'Price: High to Low': return b.price - a.price;
@@ -433,16 +516,16 @@ export default function ProductsScreen() {
       <ScrollView style={styles.productsContainer}>
         <View style={styles.productsGrid}>
           {filteredProducts.map((product) => (
-            <View key={product.id} style={[styles.productCard, { backgroundColor: colors.card }]}>
+            <View key={getProductId(product)} style={[styles.productCard, { backgroundColor: colors.card }]}>
               <TouchableOpacity 
                 activeOpacity={0.8}
-                onPress={() => handleProductPress(product.id)}
+                onPress={() => handleProductPress(getProductId(product))}
               >
-                <Image source={{ uri: product.image }} style={styles.productImage} />
+                <Image source={{ uri: getProductImage(product) }} style={styles.productImage} />
                 <View style={styles.productInfo}>
                   <View style={styles.productHeader}>
                     <Text style={[styles.productCategory, { color: colors.primary }]}>{product.category}</Text>
-                    {product.organic && (
+                    {isOrganic(product) && (
                       <View style={[styles.organicBadge, { backgroundColor: colors.success + '20' }]}>
                         <Text style={[styles.organicBadgeText, { color: colors.success }]}>Organic</Text>
                       </View>
